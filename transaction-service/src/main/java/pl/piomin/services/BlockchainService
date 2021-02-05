@@ -1,0 +1,125 @@
+@Service
+public class BlockchainService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(BlockchainService.class);
+
+    private final Web3j web3j;
+
+    public BlockchainService(Web3j web3j) {
+        this.web3j = web3j;
+    }
+
+    public BlockchainTransaction process(BlockchainTransaction trx) throws IOException {
+
+        EthAccounts accounts = web3j.ethAccounts().send();
+        EthGetTransactionCount transactionCount = web3j.ethGetTransactionCount(accounts.getAccounts().get(trx.getFromId()), DefaultBlockParameterName.LATEST).send();
+
+        Transaction transaction = Transaction.createEtherTransaction(
+                accounts.getAccounts().get(trx.getFromId()), transactionCount.getTransactionCount(), BigInteger.valueOf(trx.getValue()),
+                BigInteger.valueOf(21000), accounts.getAccounts().get(trx.getToId()), BigInteger.valueOf(trx.getValue()));
+
+        EthSendTransaction response = web3j.ethSendTransaction(transaction).send();
+
+        if (response.getError() != null) {
+            trx.setAccepted(false);
+            LOGGER.info("Tx rejected: {}", response.getError().getMessage());
+            return trx;
+        }
+
+        trx.setAccepted(true);
+        String txHash = response.getTransactionHash();
+        LOGGER.info("Tx hash: {}", txHash);
+
+        trx.setId(txHash);
+        EthGetTransactionReceipt receipt = web3j.ethGetTransactionReceipt(txHash).send();
+
+        receipt.getTransactionReceipt().ifPresent(transactionReceipt -> LOGGER.info("Tx receipt:  {}", transactionReceipt.getCumulativeGasUsed().intValue()));
+
+        return trx;
+
+    }
+
+    public EthAccounts getEthAccounts() throws IOException {
+        EthAccounts ethAccounts = web3j.ethAccounts().send();
+        return ethAccounts;
+    }
+
+    public List<EthGetBalance> getEthBalance() throws IOException {
+        List<EthGetBalance> balances = new ArrayList<EthGetBalance>();
+        EthAccounts ethAccounts = web3j.ethAccounts().send();
+        List<String> accounts = ethAccounts.getAccounts();
+        accounts.forEach(
+                acct -> {
+                    try {
+                        EthGetBalance result = this.web3j.ethGetBalance(acct, DefaultBlockParameter.valueOf("latest")).sendAsync().get();
+                        balances.add(result);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    } catch (ExecutionException e) {
+                        e.printStackTrace();
+                    }
+                }
+        );
+        return balances;
+    }
+
+    public List<BigDecimal> getEthBalanceFromWei() throws IOException {
+        List<BigDecimal> balances = new ArrayList<BigDecimal>();
+        EthAccounts ethAccounts = web3j.ethAccounts().send();
+        List<String> accounts = ethAccounts.getAccounts();
+        accounts.forEach(
+                acct -> {
+                    try {
+                        EthGetBalance result = this.web3j.ethGetBalance(acct, DefaultBlockParameter.valueOf("latest")).sendAsync().get();
+                        //Wei is the smallest denomination of ether, the cryptocurrency coin used on the Ethereum network. 1 Ether = 1,000,000,000,000,000,000 Wei (1018)
+                        LOGGER.info("balance in wei: " + result);
+                        BigDecimal balanceInEther = Convert.fromWei(result.getBalance().toString(), Convert.Unit.ETHER);
+                        balances.add(balanceInEther);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    } catch (ExecutionException e) {
+                        e.printStackTrace();
+                    }
+                }
+        );
+        return balances;
+    }
+
+    public List<EthGetTransactionCount> getEthTransaction() throws IOException {
+        List<EthGetTransactionCount> transCount = new ArrayList<EthGetTransactionCount>();
+        EthAccounts ethAccounts = web3j.ethAccounts().send();
+        List<String> accounts = ethAccounts.getAccounts();
+        accounts.forEach(
+                acct -> {
+                    try {
+                        EthGetTransactionCount result = this.web3j.ethGetTransactionCount(acct, DefaultBlockParameter.valueOf("latest")).sendAsync().get();
+                        transCount.add(result);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    } catch (ExecutionException e) {
+                        e.printStackTrace();
+                    }
+                }
+        );
+        return transCount;
+    }
+
+}
+spring:
+  application:
+    name: transaction-service
+server:
+  port: ${PORT:8090}
+  ### For Ethereum blockchain
+web3j:
+  client-address: http://localhost:8545
+  cloud.stream.bindings.output:
+    content-type: application/json
+    # remove::start[]
+    destination: verifications
+    # remove::end[]
+    jackson:
+      date-format: com.fasterxml.jackson.databind.util.ISO8601DateFormat
+logging:
+  level:
+    org.springframework.cloud: debug
